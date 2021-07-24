@@ -111,11 +111,17 @@ SX126X_LoRaRadio::SX126X_LoRaRadio(PinName mosi,
     , irq_thread(osPriorityRealtime, 1024, NULL, "LR-SX126X")
 #endif
 {
+    _mosi_pin = mosi;
+    _miso_pin = miso;
+    _sclk_pin = sclk;
+    _ant_sw_pin = ant_switch;
     _radio_events = NULL;
     _reset_ctl = 1;
     _image_calibrated = false;
     _force_image_calibration = false;
     _active_modem = MODEM_LORA;
+
+    init_hardware();
 
 #ifdef MBED_CONF_RTOS_PRESENT
     irq_thread.start(callback(this, &SX126X_LoRaRadio::rf_irq_task));
@@ -408,8 +414,8 @@ void SX126X_LoRaRadio::init_radio(radio_events_t *events)
 
     // Hold chip-select high
     _chip_select = 1;
-    _spi.format(8, 0);
-    _spi.frequency(SPI_FREQUENCY);
+    _spi->format(8, 0);
+    _spi->frequency(SPI_FREQUENCY);
     // 100 us wait to settle down
     wait_us(100);
 
@@ -521,6 +527,7 @@ void SX126X_LoRaRadio::wakeup()
     // hold the NSS low, this should wakeup the chip.
     // now we should wait for the _busy line to go low
     if (_operation_mode == MODE_SLEEP) {
+        init_hardware();
         _chip_select = 0;
         wait_us(100);
         _chip_select = 1;
@@ -548,6 +555,8 @@ void SX126X_LoRaRadio::sleep(void)
 
     write_opmode_command(RADIO_SET_SLEEP, &sleep_state, 1);
     ThisThread::sleep_for(2);
+
+    deinit_hardware();
 }
 
 uint32_t SX126X_LoRaRadio::random(void)
@@ -574,10 +583,10 @@ void SX126X_LoRaRadio::write_opmode_command(uint8_t cmd, uint8_t *buffer, uint16
         // do nothing
     }
 
-    _spi.write(cmd);
+    _spi->write(cmd);
 
     for (int i = 0; i < size; i++) {
-        _spi.write(buffer[i]);
+        _spi->write(buffer[i]);
     }
 
     _chip_select = 1;
@@ -592,11 +601,11 @@ void SX126X_LoRaRadio::read_opmode_command(uint8_t cmd,
         // do nothing
     }
 
-    _spi.write(cmd);
-    _spi.write(0);
+    _spi->write(cmd);
+    _spi->write(0);
 
     for (int i = 0; i < size; i++) {
-        buffer[i] = _spi.write(0);
+        buffer[i] = _spi->write(0);
     }
 
     _chip_select = 1;
@@ -612,12 +621,12 @@ void SX126X_LoRaRadio::write_to_register(uint16_t addr, uint8_t *data,
 {
     _chip_select = 0;
 
-    _spi.write(RADIO_WRITE_REGISTER);
-    _spi.write((addr & 0xFF00) >> 8);
-    _spi.write(addr & 0x00FF);
+    _spi->write(RADIO_WRITE_REGISTER);
+    _spi->write((addr & 0xFF00) >> 8);
+    _spi->write(addr & 0x00FF);
 
     for (int i = 0; i < size; i++) {
-        _spi.write(data[i]);
+        _spi->write(data[i]);
     }
 
     _chip_select = 1;
@@ -636,13 +645,13 @@ void SX126X_LoRaRadio::read_register(uint16_t addr, uint8_t *buffer,
 {
     _chip_select = 0;
 
-    _spi.write(RADIO_READ_REGISTER);
-    _spi.write((addr & 0xFF00) >> 8);
-    _spi.write(addr & 0x00FF);
-    _spi.write(0);
+    _spi->write(RADIO_READ_REGISTER);
+    _spi->write((addr & 0xFF00) >> 8);
+    _spi->write(addr & 0x00FF);
+    _spi->write(0);
 
     for (int i = 0; i < size; i++) {
-        buffer[i] = _spi.write(0);
+        buffer[i] = _spi->write(0);
     }
 
     _chip_select = 1;
@@ -652,11 +661,11 @@ void SX126X_LoRaRadio::write_fifo(uint8_t *buffer, uint8_t size)
 {
     _chip_select = 0;
 
-    _spi.write(RADIO_WRITE_BUFFER);
-    _spi.write(0);
+    _spi->write(RADIO_WRITE_BUFFER);
+    _spi->write(0);
 
     for (int i = 0; i < size; i++) {
-        _spi.write(buffer[i]);
+        _spi->write(buffer[i]);
     }
 
     _chip_select = 1;
@@ -683,12 +692,12 @@ void SX126X_LoRaRadio::read_fifo(uint8_t *buffer, uint8_t size, uint8_t offset)
 {
     _chip_select = 0;
 
-    _spi.write(RADIO_READ_BUFFER);
-    _spi.write(offset);
-    _spi.write(0);
+    _spi->write(RADIO_READ_BUFFER);
+    _spi->write(offset);
+    _spi->write(0);
 
     for (int i = 0; i < size; i++) {
-        buffer[i] = _spi.write(0);
+        buffer[i] = _spi->write(0);
     }
 
     _chip_select = 1;
@@ -1349,6 +1358,35 @@ void SX126X_LoRaRadio::clear_device_errors(void)
 {
     uint8_t buf[2] = {0x00, 0x00};
     write_opmode_command((uint8_t) RADIO_CLR_ERROR, buf, 2);
+}
+
+/**
+ * @brief Initialise hardware
+ * 
+ */
+void SX126X_LoRaRadio::init_hardware(void)
+{
+     DigitalOut ant_sw(_ant_sw_pin);
+
+    _spi = new SPI(_mosi_pin, _miso_pin, _sclk_pin);
+    
+    // Hold chip-select high
+    _chip_select = 1;
+    _spi->format(8, 0);
+    _spi->frequency(SPI_FREQUENCY);
+}
+
+/**
+ * @brief Deinitialise hardware for low power
+ * 
+ */
+void SX126X_LoRaRadio::deinit_hardware(void)
+{
+    delete _spi;
+    AnalogIn mosi(_mosi_pin);
+    AnalogIn miso(_miso_pin);
+    AnalogIn sclk(_sclk_pin);
+    AnalogIn ant_sw(_ant_sw_pin);
 }
 
 #endif // DEVICE_SPI

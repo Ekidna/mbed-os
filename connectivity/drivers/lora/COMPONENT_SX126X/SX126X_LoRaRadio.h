@@ -293,8 +293,14 @@ public:
 
 private:
 
+    // PinNames
+    PinName _mosi_pin;
+    PinName _miso_pin;
+    PinName _sclk_pin;
+    PinName _ant_sw_pin;
+
     // SPI and chip select control
-    mbed::SPI _spi;
+    mbed::SPI *_spi;
     mbed::DigitalOut _chip_select;
 
     // module rest control
@@ -391,6 +397,10 @@ private:
     void configure_dio_irq(uint16_t irq_mask, uint16_t dio1_mask,
                            uint16_t dio2_mask, uint16_t dio3_mask);
     void cold_start_wakeup();
+
+    // Low power hardware helpers
+    void init_hardware();
+    void deinit_hardware();
 
 private:
     uint8_t _active_modem;
